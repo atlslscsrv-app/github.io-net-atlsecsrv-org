@@ -1,0 +1,453 @@
+name:
+  1.$(Date:yyyyMMdd)$(Rev:.r)
+
+pool:
+  name: Hosted VS2017
+  timeoutInMinutes: 200
+
+steps:
+- task: NodeTool@0
+  inputs:
+    versionSpec: '8.15.0'
+  displayName: 'Install Node.js'
+
+- task: NuGetToolInstaller@0
+  displayName: 'Use NuGet 4.4.1'
+  inputs:
+    versionSpec: 4.4.1
+
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '2.7.16'
+
+- script: |
+    npm install
+  displayName: 'npm install dev dependencies'
+
+- script: |
+    cd $(Build.SourcesDirectory)\dist\resources\app
+    npm install
+  displayName: 'npm install dist dependencies'
+
+- script: |
+    cd $(Build.SourcesDirectory)\node_modules_forked
+    npm install
+  displayName: 'npm install native dependencies'
+
+- script: |
+    gulp build --gulpfile build\gulpfile.js --buildVersion "$(Build.BuildNumber)" --buildBranch $(Build.SourceBranchName) --sourceFolder $(Build.SourcesDirectory) --outputFolder $(Build.SourcesDirectory)\dist
+  displayName: 'run gulp'
+
+- task: NuGetCommand@2
+  displayName: 'NuGet restore'
+  inputs:
+    restoreSolution: '$(Build.SourcesDirectory)\dotNet\Orb.sln'
+
+- task: VSBuild@1
+  displayName: 'Build .NET sln'
+  inputs:
+    solution: '$(Build.SourcesDirectory)\dotNet\Orb.sln'
+
+    platform: 'Any CPU'
+
+    configuration: Release
+
+- script: |
+    npm test --prefix $(Build.SourcesDirectory)\dist\resources\app
+  displayName: 'npm test'
+
+- script: |
+    cd $(Build.SourcesDirectory)\dist\resources\app
+    npm prune --production
+  displayName: 'remove dev dependencies'
+
+- task: PowerShell@2
+  inputs: 
+    filePath: $(Build.SourcesDirectory)\node_modules_native\buildNativeDependencies.ps1
+  displayName: 'compile native dependencies'
+
+# - task: CopyFiles@2
+#   inputs:
+#     sourceFolder: $(Build.SourcesDirectory)\dist
+#     #contents: '**'
+#     targetFolder: $(Build.SourcesDirectory)\dist_saw
+
+# - task: CopyFiles@2
+#   inputs:
+#     sourceFolder: $(Build.SourcesDirectory)\node_modules\electron-winstaller\vendor
+#     #contents: '**'
+#     targetFolder: $(Build.SourcesDirectory)\electron-winstaller_saw
+
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: $(Build.SourcesDirectory)\node_modules\electron-winstaller\vendor
+    contents: 'setup.exe'
+    targetFolder: $(Build.SourcesDirectory)\unsignedSetup\
+    # Make a copy of setup.exe to replace later. This is done so setup.exe is signed only once at the end.
+    # Exclusions using minimatch don't seem to be working, hence this workaround of copying.
+
+- task: PublishTestResults@2
+  inputs:
+    testResultsFiles: '**/Test-*.xml'
+    searchFolder: '$(Build.SourcesDirectory)'
+
+- task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@1
+  enabled: true
+  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+  displayName: 'ESRP CodeSigning - Third Parties'
+  inputs:
+    FolderPath: $(Build.SourcesDirectory)
+    ConnectedServiceName: 'Orb ESRP'
+
+    Pattern: |
+      dist/**/*.dll
+      node_modules/electron-winstaller/**/*.dll
+
+    UseMinimatch: true
+
+    signConfigType: inlineSignParams
+
+    OpusName: Orb
+
+    OpusInfo: 'https://www.github.com/microsot/orb'
+
+    inlineOperation: |
+     [  {
+             "keyCode": "CP-231522",
+             "operationSetCode": "SigntoolSign",
+             "parameters": [
+             {
+                 "parameterName": "OpusName",
+                 "parameterValue": "Microsoft"
+             },
+             {
+                 "parameterName": "OpusInfo",
+                 "parameterValue": "http://www.microsoft.com"
+             },
+             {
+                 "parameterName": "Append",
+                 "parameterValue": "/as"
+             },
+             {
+                 "parameterName": "FileDigest",
+                 "parameterValue": "/fd \"SHA256\""
+             },
+             {
+                 "parameterName": "PageHash",
+                 "parameterValue": "/NPH"
+             },
+             {
+                 "parameterName": "TimeStamp",
+                 "parameterValue": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+             }
+             ],
+             "toolName": "sign",
+             "toolVersion": "1.0"
+         },
+         {
+             "keyCode": "CP-231522",
+             "operationSetCode": "SigntoolVerify",
+             "parameters": [ ],
+             "toolName": "sign",
+             "toolVersion": "1.0"
+         }]
+
+- task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@1
+  enabled: true
+  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+  displayName: 'ESRP CodeSigning - Exe'
+  inputs:
+    FolderPath: $(Build.SourcesDirectory)
+    ConnectedServiceName: 'Orb ESRP'
+
+    Pattern: |
+      /dist/**/*.exe
+      /node_modules/electron-winstaller/**/*.exe
+
+    UseMinimatch: true
+
+    signConfigType: inlineSignParams
+
+    OpusName: Orb
+
+    OpusInfo: 'https://www.github.com/microsot/orb'
+
+    inlineOperation: |
+     [  {
+             "keyCode": "CP-230012",
+             "operationSetCode": "SigntoolSign",
+             "parameters": [
+             {
+                 "parameterName": "OpusName",
+                 "parameterValue": "Microsoft"
+             },
+             {
+                 "parameterName": "OpusInfo",
+                 "parameterValue": "http://www.microsoft.com"
+             },
+             {
+                 "parameterName": "Append",
+                 "parameterValue": "/as"
+             },
+             {
+                 "parameterName": "FileDigest",
+                 "parameterValue": "/fd \"SHA256\""
+             },
+             {
+                 "parameterName": "PageHash",
+                 "parameterValue": "/NPH"
+             },
+             {
+                 "parameterName": "TimeStamp",
+                 "parameterValue": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+             }
+             ],
+             "toolName": "sign",
+             "toolVersion": "1.0"
+         },
+         {
+             "keyCode": "CP-230012",
+             "operationSetCode": "SigntoolVerify",
+             "parameters": [ ],
+             "toolName": "sign",
+             "toolVersion": "1.0"
+         }]
+
+# - task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@1
+#   enabled: true
+#   condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+#   displayName: 'ESRP CodeSigning - SAW'
+#   inputs:
+#     FolderPath: $(Build.SourcesDirectory)
+#     ConnectedServiceName: 'Orb ESRP'
+
+#     Pattern: |
+#       /dist_saw/**/*.exe
+#       /dist_saw/**/*.dll
+#       /electron-winstaller_saw/**/*.exe
+#       /electron-winstaller_saw/**/*.dll
+#       !/electron-winstaller_saw/setup.exe #Installer setup.exe is signed at the end.
+
+#     UseMinimatch: true
+
+#     signConfigType: inlineSignParams
+
+#     OpusName: Orb
+
+#     OpusInfo: 'https://www.github.com/microsot/orb'
+
+#     inlineOperation: |
+#      [  {
+#              "keyCode": "CP-236169",
+#              "operationSetCode": "SigntoolSign",
+#              "parameters": [
+#              {
+#                  "parameterName": "OpusName",
+#                  "parameterValue": "Microsoft"
+#              },
+#              {
+#                  "parameterName": "OpusInfo",
+#                  "parameterValue": "http://www.microsoft.com"
+#              },
+#              {
+#                  "parameterName": "Append",
+#                  "parameterValue": "/as"
+#              },
+#              {
+#                  "parameterName": "FileDigest",
+#                  "parameterValue": "/fd \"SHA256\""
+#              },
+#              {
+#                  "parameterName": "PageHash",
+#                  "parameterValue": "/NPH"
+#              },
+#              {
+#                  "parameterName": "TimeStamp",
+#                  "parameterValue": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+#              }
+#              ],
+#              "toolName": "sign",
+#              "toolVersion": "1.0"
+#          },
+#          {
+#              "keyCode": "CP-236169",
+#              "operationSetCode": "SigntoolVerify",
+#              "parameters": [ ],
+#              "toolName": "sign",
+#              "toolVersion": "1.0"
+#          }]
+
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: $(Build.SourcesDirectory)\unsignedSetup\
+    contents: 'setup.exe'
+    targetFolder: $(Build.SourcesDirectory)\node_modules\electron-winstaller\vendor
+    overWrite: true
+
+- script: |
+    gulp createInstaller --gulpfile build\gulpfile.js --buildVersion "$(Build.BuildNumber)" --buildBranch $(Build.SourceBranchName) --sourceFolder $(Build.SourcesDirectory) --outputFolder $(Build.SourcesDirectory)\dist
+  displayName: 'run gulp createInstaller'
+  enabled: true
+  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+
+# - task: CopyFiles@2
+#   inputs:
+#     sourceFolder: $(Build.SourcesDirectory)\electron-winstaller_saw
+#     #contents: '**'
+#     targetFolder: $(Build.SourcesDirectory)\node_modules\electron-winstaller\vendor
+#     overWrite: true
+#     # Replace the SAW signed squirrel bits in the original folder before create installer is invoked.
+
+# - task: CopyFiles@2
+#   inputs:
+#     sourceFolder: $(Build.SourcesDirectory)\unsignedSetup\
+#     contents: 'setup.exe'
+#     targetFolder: $(Build.SourcesDirectory)\node_modules\electron-winstaller\vendor
+#     overWrite: true
+
+# - script: |
+#     echo $(SAWBlobUrl) > $(Build.SourcesDirectory)\dist_saw\resources\app\autoUpdatePath.txt
+#   displayName: 'Update SAW autoUpdatePath'
+#   enabled: true
+
+# - script: |
+#     echo $(SAWBlobUrl_Insiders) > $(Build.SourcesDirectory)\dist_saw\resources\app\autoUpdatePath_insiders.txt
+#   displayName: 'Update SAW autoUpdatePath insiders'
+#   enabled: true
+
+# - script: |
+#     gulp createInstaller --gulpfile build\gulpfile.js --buildVersion "$(Build.BuildNumber)" --buildBranch $(Build.SourceBranchName) --sourceFolder $(Build.SourcesDirectory) --outputFolder $(Build.SourcesDirectory)\dist_saw
+#   displayName: 'run gulp createInstaller SAW'
+#   enabled: true
+#   condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+
+- task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@1
+  enabled: true
+  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+  displayName: 'ESRP CodeSigning - Installer'
+  inputs:
+    FolderPath: $(Build.SourcesDirectory)\installer
+    ConnectedServiceName: 'Orb ESRP'
+
+    signConfigType: inlineSignParams
+
+    OpusName: Orb
+
+    OpusInfo: 'https://www.github.com/microsot/orb'
+
+    inlineOperation: |
+     [  {
+             "keyCode": "CP-230012",
+             "operationSetCode": "SigntoolSign",
+             "parameters": [
+             {
+                 "parameterName": "OpusName",
+                 "parameterValue": "Microsoft"
+             },
+             {
+                 "parameterName": "OpusInfo",
+                 "parameterValue": "http://www.microsoft.com"
+             },
+             {
+                 "parameterName": "Append",
+                 "parameterValue": "/as"
+             },
+             {
+                 "parameterName": "FileDigest",
+                 "parameterValue": "/fd \"SHA256\""
+             },
+             {
+                 "parameterName": "PageHash",
+                 "parameterValue": "/NPH"
+             },
+             {
+                 "parameterName": "TimeStamp",
+                 "parameterValue": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+             }
+             ],
+             "toolName": "sign",
+             "toolVersion": "1.0"
+         },
+         {
+             "keyCode": "CP-230012",
+             "operationSetCode": "SigntoolVerify",
+             "parameters": [ ],
+             "toolName": "sign",
+             "toolVersion": "1.0"
+         }]
+
+# - task: SFP.build-tasks.custom-build-task-1.EsrpCodeSigning@1
+#   displayName: 'ESRP CodeSigning - Installer Saw'
+#   enabled: true
+#   condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+#   inputs:
+#     FolderPath: $(Build.SourcesDirectory)\installer_saw
+#     ConnectedServiceName: 'Orb ESRP'
+
+#     signConfigType: inlineSignParams
+
+#     OpusName: Orb
+
+#     OpusInfo: 'https://www.github.com/microsot/orb'
+
+#     inlineOperation: |
+#      [  {
+#              "keyCode": "CP-236169",
+#              "operationSetCode": "SigntoolSign",
+#              "parameters": [
+#              {
+#                  "parameterName": "OpusName",
+#                  "parameterValue": "Microsoft"
+#              },
+#              {
+#                  "parameterName": "OpusInfo",
+#                  "parameterValue": "http://www.microsoft.com"
+#              },
+#              {
+#                  "parameterName": "Append",
+#                  "parameterValue": "/as"
+#              },
+#              {
+#                  "parameterName": "FileDigest",
+#                  "parameterValue": "/fd \"SHA256\""
+#              },
+#              {
+#                  "parameterName": "PageHash",
+#                  "parameterValue": "/NPH"
+#              },
+#              {
+#                  "parameterName": "TimeStamp",
+#                  "parameterValue": "/tr \"http://rfc3161.gtm.corp.microsoft.com/TSS/HttpTspServer\" /td sha256"
+#              }
+#              ],
+#              "toolName": "sign",
+#              "toolVersion": "1.0"
+#          },
+#          {
+#              "keyCode": "CP-236169",
+#              "operationSetCode": "SigntoolVerify",
+#              "parameters": [ ],
+#              "toolName": "sign",
+#              "toolVersion": "1.0"
+#          }]
+
+- task: PublishBuildArtifacts@1
+  enabled: true
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'Manual'))
+  inputs:
+    PathtoPublish: '$(Build.SourcesDirectory)\dist'
+    artifactName: 'Dist'
+
+- task: PublishBuildArtifacts@1
+  enabled: true
+  condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+  inputs:
+    PathtoPublish: '$(Build.SourcesDirectory)\installer'
+    artifactName: 'Installer'
+
+# - task: PublishBuildArtifacts@1
+#   enabled: true
+#   condition: and(succeeded(), in(variables['Build.Reason'], 'Manual'))
+#   inputs:
+#     PathtoPublish: '$(Build.SourcesDirectory)\installer_saw'
+#     artifactName: 'Installer_saw'
